@@ -10,6 +10,7 @@ import (
 	"hash"
 	"io"
 	"os"
+	"path/filepath"
 	"sync"
 
 	"golang.org/x/crypto/chacha20poly1305"
@@ -51,15 +52,24 @@ type KeyValue struct {
 
 // BTree structure with a node cache
 type BTree struct {
-	root         *Node
-	t            int
-	snapshot     string
-	opLog        string
-	snapshotFile *os.File
-	logFile      *os.File
-	hmacKey      []byte
-	mu           sync.RWMutex
-	cache        *Cache // Cache with configurable size
+	root    *Node
+	t       int
+	dbPath  string
+	dbName  string
+	logName string
+	dbFile  *os.File
+	logFile *os.File
+	hmacKey []byte
+	mu      sync.RWMutex
+	cache   *Cache // Cache with configurable size
+}
+
+// Add trailing slash to dbPath if not present
+func ensureTrailingSlash(path string) string {
+	if path != "" && path[len(path)-1] != '/' {
+		return path + "/"
+	}
+	return path
 }
 
 // Node structure remains unchanged
@@ -163,12 +173,30 @@ func (c *Cache) evict() {
 }
 
 // NewBTree initializes the B-tree and adds a cache with configurable size
-func NewBTree(t int, snapshot, logPath string, hmacKey, encryptionKey, nonce []byte, cacheSize int) (*BTree, error) {
+// Takes dbPath, dbName, logName to construct full file paths
+func NewBTree(t int, dbPath, dbName, logName string, hmacKey, encryptionKey, nonce []byte, cacheSize int) (*BTree, error) {
+	// Ensure the dbPath has a trailing slash
+	dbPath = ensureTrailingSlash(dbPath)
+
+	// Default to "kayvee.db" if no dbName is provided
+	if dbName == "" {
+		dbName = "kayvee.db"
+	}
+
+	// Default to "kayvee.log" if no logName is provided
+	if logName == "" {
+		logName = "kayvee.log"
+	}
+
+	// Build full paths for db and log files
+	dbFilePath := filepath.Join(dbPath, dbName)
+	logFilePath := filepath.Join(dbPath, logName)
+
 	flushFn := func(offset int64, node *Node) error {
 		// Flush the node to disk before eviction
-		file, err := os.OpenFile(snapshot, os.O_RDWR|os.O_CREATE, 0644)
+		file, err := os.OpenFile(dbFilePath, os.O_RDWR|os.O_CREATE, 0644)
 		if err != nil {
-			return fmt.Errorf("failed to open snapshot file: %w", err)
+			return fmt.Errorf("failed to open database file: %w", err)
 		}
 		defer file.Close()
 
@@ -186,25 +214,28 @@ func NewBTree(t int, snapshot, logPath string, hmacKey, encryptionKey, nonce []b
 	}
 
 	b := &BTree{
-		t:        t,
-		snapshot: snapshot,
-		opLog:    logPath,
-		hmacKey:  hmacKey,
-		cache:    NewCache(cacheSize, flushFn), // Initialize a cache with configurable size
+		t:       t,
+		dbPath:  dbPath,
+		dbName:  dbName,
+		logName: logName,
+		hmacKey: hmacKey,
+		cache:   NewCache(cacheSize, flushFn), // Initialize a cache with configurable size
 	}
 
+	// Open database file
 	var err error
-	b.snapshotFile, err = os.OpenFile(b.snapshot, os.O_RDWR|os.O_CREATE, 0644)
+	b.dbFile, err = os.OpenFile(dbFilePath, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		return nil, err
 	}
 
-	b.logFile, err = os.OpenFile(b.opLog, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
+	// Open log file
+	b.logFile, err = os.OpenFile(logFilePath, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := b.loadSnapshot(); err != nil {
+	if err := b.loaddbName(); err != nil {
 		return nil, err
 	}
 
@@ -233,9 +264,10 @@ func (b *BTree) Insert(key string, value, encryptionKey, nonce []byte) error {
 			isLeaf: true,
 			keys:   []*KeyValue{kv},
 		}
-		b.logOperation("CREATE", key, encValue)
+		b.logOperation("CREATE", key, encValue, false) // Log normally
 		return nil
 	}
+
 	if root.numKeys == 2*b.t-1 {
 		newRoot := &Node{children: []int64{root.offset}}
 		b.splitChild(newRoot, 0, root)
@@ -248,9 +280,10 @@ func (b *BTree) Insert(key string, value, encryptionKey, nonce []byte) error {
 		}
 	}
 
-	b.logOperation("CREATE", key, encValue)
+	b.logOperation("CREATE", key, encValue, false) // Log normally
 	return nil
 }
+
 
 // Update an existing key-value pair and log the operation.
 func (b *BTree) Update(key string, newValue, encryptionKey, nonce []byte) error {
@@ -269,7 +302,7 @@ func (b *BTree) Update(key string, newValue, encryptionKey, nonce []byte) error 
 	}
 
 	node.Value = encValue
-	b.logOperation("CREATE", key, encValue)
+	b.logOperation("CREATE", key, encValue, false)
 	return nil
 }
 
@@ -323,7 +356,7 @@ func (b *BTree) Delete(node *Node, key string) error {
 }
 
 func (b *BTree) Close() error {
-	if err := b.snapshotFile.Close(); err != nil {
+	if err := b.dbFile.Close(); err != nil {
 		return err
 	}
 	if err := b.logFile.Close(); err != nil {
@@ -332,12 +365,12 @@ func (b *BTree) Close() error {
 	return nil
 }
 
-// resetLog resets the operation log after a snapshot.
+// resetLog resets the operation log after a dbName.
 func (b *BTree) resetLog() error {
 	if err := b.logFile.Close(); err != nil {
 		return err
 	}
-	file, err := os.Create(b.opLog)
+	file, err := os.Create(b.logName)
 	if err != nil {
 		return err
 	}
@@ -345,9 +378,9 @@ func (b *BTree) resetLog() error {
 	return nil
 }
 
-// loadSnapshot loads the B-tree from the snapshot file.
-func (b *BTree) loadSnapshot() error {
-	file, err := os.Open(b.snapshot)
+// loaddbName loads the B-tree from the dbName file.
+func (b *BTree) loaddbName() error {
+	file, err := os.Open(b.dbName)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -365,7 +398,7 @@ func (b *BTree) loadSnapshot() error {
 
 // loadLog replays the operation log to restore the latest state.
 func (b *BTree) loadLog(encryptionKey, nonce []byte) error {
-	file, err := os.Open(b.opLog)
+	file, err := os.Open(b.logName)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -384,15 +417,19 @@ func (b *BTree) loadLog(encryptionKey, nonce []byte) error {
 			return err
 		}
 
+		// Replay the log but skip writing new logs during replay
 		switch entry.Operation {
 		case "CREATE":
 			b.Insert(entry.Key, entry.Value, encryptionKey, nonce)
+			b.logOperation("CREATE", entry.Key, entry.Value, true) // Skip logging
 		case "DELETE":
 			b.Delete(b.root, entry.Key)
+			b.logOperation("DELETE", entry.Key, nil, true) // Skip logging
 		}
 	}
 	return nil
 }
+
 
 // Read retrieves and decrypts a value.
 func (b *BTree) Read(key string, encryptionKey, nonce []byte) ([]byte, error) {
@@ -412,27 +449,38 @@ func (b *BTree) Read(key string, encryptionKey, nonce []byte) ([]byte, error) {
 	return decValue, nil
 }
 
-// Snapshot writes the B-tree to disk and resets the log.
-func (b *BTree) Snapshot() error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
+func (b *BTree) saveToDB() error {
+    b.mu.Lock()
+    defer b.mu.Unlock()
 
-	file, err := os.Create(b.snapshot)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
+    file, err := os.Create(filepath.Join(b.dbPath, b.dbName)) // Correct usage of dbPath and dbName
+    if err != nil {
+        return err
+    }
+    defer file.Close()
 
-	encoder := gob.NewEncoder(file)
-	if err := encoder.Encode(b.root); err != nil {
-		return err
-	}
+    encoder := gob.NewEncoder(file)
+    if err := encoder.Encode(b.root); err != nil {
+        return err
+    }
 
-	return b.resetLog()
+    return b.resetLog()
+}
+
+func (b *BTree) Shutdown() error {
+    // Save the current state of the BTree to the database file
+    if err := b.saveToDB(); err != nil {
+        return fmt.Errorf("failed to save B-tree state: %w", err)
+    }
+    // Close open files (dbFile and logFile)
+    return b.Close()
 }
 
 // logOperation logs each operation for persistence.
-func (b *BTree) logOperation(op, key string, value []byte) error {
+func (b *BTree) logOperation(op, key string, value []byte, skipLog bool) error {
+	if skipLog {
+		return nil // Skip logging if we're replaying logs
+	}
 	entry := LogEntry{
 		Operation: op,
 		Key:       key,
@@ -444,6 +492,7 @@ func (b *BTree) logOperation(op, key string, value []byte) error {
 	}
 	return b.logFile.Sync() // Sync the log file to disk after writing
 }
+
 
 // Encryption and decryption functions using XChaCha20.
 func (b *BTree) encrypt(data, encryptionKey, nonce []byte) ([]byte, error) {
@@ -459,11 +508,11 @@ func (b *BTree) writeRoot() error {
 	if err != nil {
 		return err
 	}
-	_, err = b.snapshotFile.Seek(0, io.SeekStart) // Move to the start of the file
+	_, err = b.dbFile.Seek(0, io.SeekStart) // Move to the start of the file
 	if err != nil {
 		return err
 	}
-	encoder := gob.NewEncoder(b.snapshotFile)
+	encoder := gob.NewEncoder(b.dbFile)
 	return encoder.Encode(offset)
 }
 
@@ -832,62 +881,68 @@ func (b *BTree) borrowFromNext(node *Node, idx int) error {
 
 	return nil
 }
-// readNode checks the cache before reading from disk
+
+// Correct file opening with dbFilePath in readNode and writeNode
 func (b *BTree) readNode(offset int64) (*Node, error) {
-	// Check cache first
-	if node, ok := b.cache.Get(offset); ok {
-		// Return node from cache
-		return node, nil
-	}
+    // Use dbPath + dbName for constructing the file path
+    dbFilePath := filepath.Join(b.dbPath, b.dbName)
 
-	// If not found in cache, read from disk
-	file, err := os.OpenFile(b.snapshot, os.O_RDONLY, 0644)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open snapshot file: %w", err)
-	}
-	defer file.Close()
+    // Check cache first
+    if node, ok := b.cache.Get(offset); ok {
+        // Return node from cache
+        return node, nil
+    }
 
-	// Seek to the node's position in the file
-	_, err = file.Seek(offset, io.SeekStart)
-	if err != nil {
-		return nil, fmt.Errorf("failed seeking node at offset %d: %w", offset, err)
-	}
+    // If not found in cache, read from disk
+    file, err := os.OpenFile(dbFilePath, os.O_RDONLY, 0644)
+    if err != nil {
+        return nil, fmt.Errorf("failed to open dbName file: %w", err)
+    }
+    defer file.Close()
 
-	// Decode the node from the file
-	var node Node
-	decoder := gob.NewDecoder(file)
-	if err := decoder.Decode(&node); err != nil {
-		return nil, fmt.Errorf("failed to decode node at offset %d: %w", offset, err)
-	}
+    // Seek to the node's position in the file
+    _, err = file.Seek(offset, io.SeekStart)
+    if err != nil {
+        return nil, fmt.Errorf("failed seeking node at offset %d: %w", offset, err)
+    }
 
-	// Add the node to the cache as not dirty (it's fresh from disk)
-	b.cache.Put(offset, &node, false)
+    // Decode the node from the file
+    var node Node
+    decoder := gob.NewDecoder(file)
+    if err := decoder.Decode(&node); err != nil {
+        return nil, fmt.Errorf("failed to decode node at offset %d: %w", offset, err)
+    }
 
-	return &node, nil
+    // Add the node to the cache as not dirty (it's fresh from disk)
+    b.cache.Put(offset, &node, false)
+
+    return &node, nil
 }
 
-// writeNode writes a node to disk and adds it to the cache
 func (b *BTree) writeNode(node *Node) (int64, error) {
-	file, err := os.OpenFile(b.snapshot, os.O_RDWR|os.O_CREATE, 0644)
-	if err != nil {
-		return 0, fmt.Errorf("failed to open snapshot file: %w", err)
-	}
-	defer file.Close()
+    // Use dbPath + dbName for constructing the file path
+    dbFilePath := filepath.Join(b.dbPath, b.dbName)
 
-	// Move to the end of the file to append the new node
-	offset, err := file.Seek(0, io.SeekEnd)
-	if err != nil {
-		return 0, fmt.Errorf("failed to append new node: %w", err)
-	}
+    file, err := os.OpenFile(dbFilePath, os.O_RDWR|os.O_CREATE, 0644)
+    if err != nil {
+        return 0, fmt.Errorf("failed to open dbName file: %w", err)
+    }
+    defer file.Close()
 
-	// Encode and write the node to disk
-	encoder := gob.NewEncoder(file)
-	if err := encoder.Encode(node); err != nil {
-		return 0, fmt.Errorf("failed to encode node: %w", err)
-	}
+    // Move to the end of the file to append the new node
+    offset, err := file.Seek(0, io.SeekEnd)
+    if err != nil {
+        return 0, fmt.Errorf("failed to append new node: %w", err)
+    }
 
-	// Add the node to the cache and mark it as dirty
-	b.cache.Put(offset, node, true)
+    // Encode and write the node to disk
+    encoder := gob.NewEncoder(file)
+    if err := encoder.Encode(node); err != nil {
+        return 0, fmt.Errorf("failed to encode node: %w", err)
+    }
 
-	return offset, nil
+    // Add the node to the cache and mark it as dirty
+    b.cache.Put(offset, node, true)
+
+    return offset, nil
 }

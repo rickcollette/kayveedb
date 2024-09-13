@@ -92,19 +92,20 @@ The `BTree` struct implements a B-Tree with caching. It uses the cache for effic
 
 #### `NewBTree`
 
-Creates a new B-Tree with a configurable cache size.
+Creates a new B-Tree with a configurable cache size.  
+The database files are either the names provided, or will write to `$CWD/kayvee.db` and `$CWD/kayvee.log`.
 
 **Signature:**
 
 ```go
-func NewBTree(t int, snapshot, logPath string, hmacKey, encryptionKey, nonce []byte, cacheSize int) (*BTree, error)
+func NewBTree(t int, dbName, logName string, hmacKey, encryptionKey, nonce []byte, cacheSize int) (*BTree, error)
 ```
 
 **Parameters:**
 
 - `t int`: Minimum degree of the B-Tree.
-- `snapshot string`: Path to the snapshot file.
-- `logPath string`: Path to the operation log file.
+- `dbName string`: Path to the database file.
+- `logName string`: Path to the operation log file.
 - `hmacKey []byte`: HMAC key for hashing.
 - `encryptionKey []byte`: Encryption key for value encryption.
 - `nonce []byte`: Nonce for ChaCha20 encryption.
@@ -113,7 +114,11 @@ func NewBTree(t int, snapshot, logPath string, hmacKey, encryptionKey, nonce []b
 **Example:**
 
 ```go
-tree, err := kayveedb.NewBTree(3, "snapshot.db", "log.db", hmacKey, encryptionKey, nonce, 100)
+// Using a custom database file
+tree, err := kayveedb.NewBTree(3, "/path/to/mydb.db", "/path/to/mylog.log", hmacKey, encryptionKey, nonce, 100)
+
+// Using the default database file ($CWD/kayvee.db)
+tree, err := kayveedb.NewBTree(3, "", "", hmacKey, encryptionKey, nonce, 100)
 if err != nil {
     log.Fatal(err)
 }

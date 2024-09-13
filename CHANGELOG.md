@@ -1,7 +1,36 @@
 # Changelog: kayveedb 
-## Current Version: v1.0.3
+## Current Version: v1.0.5
 
 ### NOTE: Please open a github issue if you run into problems. Also - I am happy to review/accept merge requests.
+
+## Changelog v1.0.5 13/09/2024
+
+### Overview:
+This release introduces significant improvements to path management, data persistence, and shutdown processes. These updates enhance the user experience in managing database paths and filenames, streamline file access, and ensure that application state is safely preserved during shutdown. Additionally, the performance of logging during replay operations has been optimized by skipping redundant logs.
+
+### New Features:
+* Added support for flexible database and log file paths with trailing slash checks.
+* Introduced shutdown functionality that saves the B-tree state and closes files cleanly.
+* Skipped logging during log replay to optimize performance.
+  
+### Improvements:
+* **Database Path Management**:
+  - Added a function `ensureTrailingSlash` to automatically append a trailing slash to `dbPath` if missing.
+  - Allows better control over file paths by combining `dbPath`, `dbName`, and `logName` to construct full paths for database and log files.
+
+* **Shutdown Procedure**:
+  - Implemented `Shutdown` method to ensure the current B-tree state is saved before closing database and log files.
+  - Introduced `saveToDB` method to save the B-tree to the specified database file during shutdown.
+
+* **Optimized Logging During Log Replay**:
+  - Log operations during replay are now skipped to avoid unnecessary writes.
+  - Added the `skipLog` parameter to `logOperation` to prevent logging when replaying the operation log.
+
+### Fixes:
+* Corrected file access for reading and writing nodes, using `dbPath` + `dbName` for constructing file paths.
+* Improved error handling during file read/write operations, particularly in `readNode` and `writeNode` functions.
+
+## Changelog v1.0.3 13/09/2024
 
 ### Overview:
 
