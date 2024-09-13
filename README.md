@@ -1,13 +1,13 @@
 
 # kayveedb Go Package Documentation
 
+## Current version: **v1.0.7**
+
 ## Overview
 
 `kayveedb` is a Go package that implements a B-Tree-based key-value store with caching support, using an LRU (Least Recently Used) eviction policy. It also features encryption for stored values using ChaCha20 encryption and HMAC for key hashing.
 
 ### Version
-
-Current version: **v1.0.3**
 
 ## Installation
 

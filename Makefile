@@ -2,6 +2,7 @@
 APP_NAME := kayveedb
 VERSION_FILE := VERSION
 VERSION_GO := kayveedb.go
+README_FILE := README.md
 
 # Read the current version from the VERSION file
 CURRENT_VERSION := $(shell cat $(VERSION_FILE))
@@ -46,12 +47,18 @@ update-version-go:
 	@sed -i 's/const Version string = "v[0-9]\+\.[0-9]\+\.[0-9]\+"/const Version string = "v$(NEW_VERSION)"/' $(VERSION_GO)
 	@echo "Updated version in $(VERSION_GO)"
 
+# Update the version in README.md
+update-version-readme:
+	@sed -i 's/Current version: \*\*v[0-9]\+\.[0-9]\+\.[0-9]\+\*\*/Current version: \*\*v$(NEW_VERSION)\*\*/' $(README_FILE)
+	@echo "Updated version in $(README_FILE)"
+
 # Increment version numbers
 increment-patch:
 	@echo "Current version: $(CURRENT_VERSION)"
 	@NEW_VERSION=$(VERSION_MAJOR).$(VERSION_MINOR).$$(( $(VERSION_PATCH) + 1 )) && \
 	echo $$NEW_VERSION > $(VERSION_FILE) && \
 	$(MAKE) update-version-go NEW_VERSION=$$NEW_VERSION && \
+	$(MAKE) update-version-readme NEW_VERSION=$$NEW_VERSION && \
 	echo "Version updated to $$NEW_VERSION."
 
 increment-minor:
@@ -59,6 +66,7 @@ increment-minor:
 	@NEW_VERSION=$(VERSION_MAJOR).$$(( $(VERSION_MINOR) + 1 )).0 && \
 	echo $$NEW_VERSION > $(VERSION_FILE) && \
 	$(MAKE) update-version-go NEW_VERSION=$$NEW_VERSION && \
+	$(MAKE) update-version-readme NEW_VERSION=$$NEW_VERSION && \
 	echo "Version updated to $$NEW_VERSION."
 
 increment-major:
@@ -66,6 +74,7 @@ increment-major:
 	@NEW_VERSION=$$(( $(VERSION_MAJOR) + 1 )).0.0 && \
 	echo $$NEW_VERSION > $(VERSION_FILE) && \
 	$(MAKE) update-version-go NEW_VERSION=$$NEW_VERSION && \
+	$(MAKE) update-version-readme NEW_VERSION=$$NEW_VERSION && \
 	echo "Version updated to $$NEW_VERSION."
 
 # Push version to GitHub (for use with your pushversion.sh script)
