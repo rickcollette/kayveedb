@@ -1,257 +1,343 @@
 
-# kayveedb Documentation
-
-## NOTE: Please open a github issue if you run into problems.  Also - I am happy to review/accept merge requests.
+# kayveedb Go Package Documentation
 
 ## Overview
 
-`kayveedb` is a Go package that provides a B-tree-based key-value database with XChaCha20 encryption for both in-memory and at-rest data, as well as AES-256 for secure key hashing. It implements log-based persistence, where only changes are logged and applied later for efficiency.
+`kayveedb` is a Go package that implements a B-Tree-based key-value store with caching support, using an LRU (Least Recently Used) eviction policy. It also features encryption for stored values using ChaCha20 encryption and HMAC for key hashing.
 
-This package is suitable for environments requiring both security and performance, ensuring that both in-memory and at-rest data are encrypted. Functions in this package require the encryption key and nonce to be provided by the calling application, allowing for flexible key management.
+### Version
 
-## Features
+Current version: **v1.0.3**
 
-- **XChaCha20 encryption**: For in-memory and at-rest data.
-- **AES-256 HMAC hashing**: For secure key management.
-- **B-tree data structure**: Efficient data storage and retrieval.
-- **Log-based persistence**: Logs changes and applies them to the tree later.
+## Installation
 
-## Package Import
+To use `kayveedb`, you can import it as a Go package.
 
-```go
-import "github.com/rickcollette/kayveedb"
+```bash
+go get github.com/yourusername/kayveedb
 ```
 
-## Usage
+## Package Contents
 
-### Showing the current version
+### Constants
 
-To show the version of kayveedb:
+- `Version`: The current version of the package.
+
+### Functions
+
+#### `ShowVersion`
+
+Displays the current version of the package.
+
+**Signature:**
 
 ```go
-fmt.Println("Version: ", kayveedb.ShowVersion())
+func ShowVersion() string
 ```
 
-### Initialization
-
-To create a new B-tree:
+**Example:**
 
 ```go
-// Create a new B-tree with a minimum degree `t`, snapshot file, operation log file,
-// HMAC key, encryption key, and nonce for encryption.
-btree, err := kayveedb.NewBTree(t int, snapshot string, logPath string, hmacKey []byte, encryptionKey []byte, nonce []byte)
+fmt.Println(kayveedb.ShowVersion())
+```
+
+### Cache
+
+#### CacheEntry
+
+The `CacheEntry` struct stores the node in the cache and its access order.
+
+**Fields:**
+
+- `offset int64`: The node's offset in the file.
+- `node *Node`: The actual node.
+- `element *list.Element`: The position in the access order list.
+- `dirty bool`: Whether the node has unsaved changes.
+
+#### Cache
+
+The `Cache` struct implements an LRU cache with concurrency support, using a `sync.Map` to store nodes and a `list.List` for managing access order.
+
+**Fields:**
+
+- `store sync.Map`: Concurrent map of cached nodes.
+- `order *list.List`: Linked list to track access order.
+- `size int`: Maximum number of entries in the cache.
+- `mu sync.Mutex`: Mutex to protect the cache operations.
+- `flushFn func(offset int64, node *Node) error`: A callback function to flush dirty nodes to disk.
+
+**Methods:**
+
+- `Get(offset int64) (*Node, bool)`: Retrieves a node from the cache, moving it to the front of the access order list.
+- `Put(offset int64, node *Node, dirty bool)`: Adds a node to the cache and marks it as dirty if it has unsaved changes.
+- `evict()`: Evicts the least recently used node and flushes it to disk if it's dirty.
+
+### BTree
+
+The `BTree` struct implements a B-Tree with caching. It uses the cache for efficient node storage and retrieval.
+
+**Fields:**
+
+- `root *Node`: The root node of the B-Tree.
+- `t int`: The minimum degree of the B-Tree.
+- `snapshot string`: Path to the snapshot file.
+- `opLog string`: Path to the operation log file.
+- `snapshotFile *os.File`: Snapshot file handle.
+- `logFile *os.File`: Operation log file handle.
+- `hmacKey []byte`: Key for HMAC hashing.
+- `mu sync.RWMutex`: Read-write mutex for safe concurrent access.
+- `cache *Cache`: LRU cache for storing nodes.
+
+**Methods:**
+
+#### `NewBTree`
+
+Creates a new B-Tree with a configurable cache size.
+
+**Signature:**
+
+```go
+func NewBTree(t int, snapshot, logPath string, hmacKey, encryptionKey, nonce []byte, cacheSize int) (*BTree, error)
+```
+
+**Parameters:**
+
+- `t int`: Minimum degree of the B-Tree.
+- `snapshot string`: Path to the snapshot file.
+- `logPath string`: Path to the operation log file.
+- `hmacKey []byte`: HMAC key for hashing.
+- `encryptionKey []byte`: Encryption key for value encryption.
+- `nonce []byte`: Nonce for ChaCha20 encryption.
+- `cacheSize int`: Size of the cache.
+
+**Example:**
+
+```go
+tree, err := kayveedb.NewBTree(3, "snapshot.db", "log.db", hmacKey, encryptionKey, nonce, 100)
 if err != nil {
-    log.Fatalf("Failed to create B-tree: %v", err)
+    log.Fatal(err)
 }
 ```
 
-### Inserting Key-Value Pairs
+#### `Insert`
 
-To insert a key-value pair into the B-tree:
+Inserts a new key-value pair into the B-Tree.
 
-```go
-key := "myKey"
-value := []byte("myValue")
-encryptionKey := []byte("32-byte-long-encryption-key")
-nonce := []byte("24-byte-nonce")
-
-err := btree.Insert(key, value, encryptionKey, nonce)
-if err != nil {
-    log.Fatalf("Failed to insert key-value: %v", err)
-}
-```
-
-### Reading Values
-
-To read a value from the B-tree:
-
-```go
-decryptedValue, err := btree.Read(key, encryptionKey, nonce)
-if err != nil {
-    log.Fatalf("Failed to read key: %v", err)
-}
-fmt.Printf("Decrypted value: %s", decryptedValue)
-```
-
-### Updating Values
-
-To update a key-value pair in the B-tree:
-
-```go
-newValue := []byte("updatedValue")
-
-err := btree.Update(key, newValue, encryptionKey, nonce)
-if err != nil {
-    log.Fatalf("Failed to update key-value: %v", err)
-}
-```
-
-### Deleting Key-Value Pairs
-
-To delete a key-value pair from the B-tree:
-
-```go
-err := btree.Delete(key)
-if err != nil {
-    log.Fatalf("Failed to delete key: %v", err)
-}
-```
-
-### Snapshot and Persistence
-
-To create a snapshot of the current B-tree state:
-
-```go
-err := btree.Snapshot()
-if err != nil {
-    log.Fatalf("Failed to create snapshot: %v", err)
-}
-```
-
-## API Documentation
-
-### func NewBTree
-
-```go
-func NewBTree(t int, snapshot string, logPath string, hmacKey []byte, encryptionKey []byte, nonce []byte) (*BTree, error)
-```
-
-Creates a new B-tree with the specified parameters. It requires the minimum degree (`t`), snapshot file, operation log path, and the encryption key and nonce.
-
-#### Example:
-
-```go
-btree, err := kayveedb.NewBTree(3, "snapshot.btree", "operation.log", hmacKey, encryptionKey, nonce)
-if err != nil {
-    log.Fatalf("Failed to initialize B-tree: %v", err)
-}
-```
-
-### func (b *BTree) Insert
+**Signature:**
 
 ```go
 func (b *BTree) Insert(key string, value, encryptionKey, nonce []byte) error
 ```
 
-Inserts a new key-value pair into the B-tree. The value is encrypted using the provided `encryptionKey` and `nonce`.
+**Parameters:**
 
-#### Example:
+- `key string`: Key to insert.
+- `value []byte`: Value to insert (will be encrypted).
+- `encryptionKey []byte`: Encryption key.
+- `nonce []byte`: Nonce for encryption.
+
+**Example:**
 
 ```go
-err := btree.Insert("myKey", []byte("myValue"), encryptionKey, nonce)
+err := tree.Insert("mykey", []byte("myvalue"), encryptionKey, nonce)
 if err != nil {
-    log.Fatalf("Failed to insert key-value pair: %v", err)
+    log.Fatal(err)
 }
 ```
 
-### func (b *BTree) Read
+#### `Update`
+
+Updates an existing key-value pair in the B-Tree.
+
+**Signature:**
+
+```go
+func (b *BTree) Update(key string, newValue, encryptionKey, nonce []byte) error
+```
+
+**Parameters:**
+
+- `key string`: Key to update.
+- `newValue []byte`: New value (will be encrypted).
+- `encryptionKey []byte`: Encryption key.
+- `nonce []byte`: Nonce for encryption.
+
+**Example:**
+
+```go
+err := tree.Update("mykey", []byte("newvalue"), encryptionKey, nonce)
+if err != nil {
+    log.Fatal(err)
+}
+```
+
+#### `Delete`
+
+Deletes a key-value pair from the B-Tree.
+
+**Signature:**
+
+```go
+func (b *BTree) Delete(node *Node, key string) error
+```
+
+**Parameters:**
+
+- `node *Node`: Starting node.
+- `key string`: Key to delete.
+
+**Example:**
+
+```go
+err := tree.Delete(tree.root, "mykey")
+if err != nil {
+    log.Fatal(err)
+}
+```
+
+#### `Read`
+
+Reads and decrypts a value from the B-Tree.
+
+**Signature:**
 
 ```go
 func (b *BTree) Read(key string, encryptionKey, nonce []byte) ([]byte, error)
 ```
 
-Reads and decrypts the value associated with the given `key` using the provided `encryptionKey` and `nonce`.
+**Parameters:**
 
-#### Example:
+- `key string`: Key to read.
+- `encryptionKey []byte`: Encryption key.
+- `nonce []byte`: Nonce for decryption.
+
+**Example:**
 
 ```go
-decryptedValue, err := btree.Read("myKey", encryptionKey, nonce)
+value, err := tree.Read("mykey", encryptionKey, nonce)
 if err != nil {
-    log.Fatalf("Failed to read key: %v", err)
+    log.Fatal(err)
 }
-fmt.Printf("Decrypted value: %s", decryptedValue)
+fmt.Println("Value:", string(value))
 ```
 
-### func (b *BTree) Update
+#### `Snapshot`
 
-```go
-func (b *BTree) Update(key string, value, encryptionKey, nonce []byte) error
-```
+Writes the B-Tree to disk and resets the operation log.
 
-Updates an existing key-value pair in the B-tree. The value is encrypted using the provided `encryptionKey` and `nonce`.
-
-#### Example:
-
-```go
-err := btree.Update("myKey", []byte("newValue"), encryptionKey, nonce)
-if err != nil {
-    log.Fatalf("Failed to update key-value pair: %v", err)
-}
-```
-
-### func (b *BTree) Delete
-
-```go
-func (b *BTree) Delete(key string) error
-```
-
-Deletes the key-value pair associated with the given `key`.
-
-#### Example:
-
-```go
-err := btree.Delete("myKey")
-if err != nil {
-    log.Fatalf("Failed to delete key: %v", err)
-}
-```
-
-### func (b *BTree) Snapshot
+**Signature:**
 
 ```go
 func (b *BTree) Snapshot() error
 ```
 
-Creates a snapshot of the current B-tree structure, saving it to disk.
-
-#### Example:
+**Example:**
 
 ```go
-err := btree.Snapshot()
+err := tree.Snapshot()
 if err != nil {
-    log.Fatalf("Failed to create snapshot: %v", err)
+    log.Fatal(err)
 }
 ```
 
-### func (b *BTree) logOperation
+#### `Close`
+
+Closes the B-Tree, flushing any unsaved data to disk.
+
+**Signature:**
 
 ```go
-func (b *BTree) logOperation(op, key string, value []byte)
+func (b *BTree) Close() error
 ```
 
-Logs an operation (`CREATE`, `UPDATE`, or `DELETE`) for persistence.
-
-### func (b *BTree) loadLog
+**Example:**
 
 ```go
-func (b *BTree) loadLog(encryptionKey, nonce []byte) error
+err := tree.Close()
+if err != nil {
+    log.Fatal(err)
+}
 ```
 
-Loads the operation log from disk and replays the operations to restore the tree to its most recent state.
+### Node
 
-### func (b *BTree) loadSnapshot
+The `Node` struct represents a node in the B-Tree.
+
+**Fields:**
+
+- `keys []*KeyValue`: Slice of key-value pairs stored in the node.
+- `children []int64`: Slice of child node offsets.
+- `isLeaf bool`: Indicates whether the node is a leaf.
+- `numKeys int`: Number of keys in the node.
+- `offset int64`: Offset of the node in the file.
+
+## Encryption and HMAC
+
+The `kayveedb` package uses ChaCha20 for encryption and HMAC with SHA-256 for key hashing.
+
+- **Encryption:** Uses `chacha20poly1305` from the `golang.org/x/crypto` package.
+- **HMAC:** Uses SHA-256 for hashing keys.
+
+### Encryption Functions
+
+#### `encrypt`
+
+Encrypts data using ChaCha20-Poly1305.
+
+**Signature:**
 
 ```go
-func (b *BTree) loadSnapshot() error
+func (b *BTree) encrypt(data, encryptionKey, nonce []byte) ([]byte, error)
 ```
 
-Loads the B-tree from the snapshot file if it exists.
+#### `decrypt`
 
-## Internal Functions
+Decrypts data using ChaCha20-Poly1305.
 
-These are internal functions used to manage B-tree nodes and encryption:
+**Signature:**
 
-- `encrypt(data, encryptionKey, nonce []byte) ([]byte, error)`
-- `decrypt(data, encryptionKey, nonce []byte) ([]byte, error)`
-- `hashKey(key string) string`
-- `splitChild(parent *Node, i int, fullChild *Node)`
-- `insertNonFull(node *Node, kv *KeyValue)`
-- `search(node *Node, key string) *KeyValue`
-- `delete(node *Node, key string)`
-- `merge(node *Node, idx int)`
-- `fill(node *Node, idx int)`
-- `borrowFromPrev(node *Node, idx int)`
-- `borrowFromNext(node *Node, idx int)`
+```go
+func (b *BTree) decrypt(data, encryptionKey, nonce []byte) ([]byte, error)
+```
+
+### HMAC Functions
+
+#### `hashKey`
+
+Hashes a key using HMAC with SHA-256.
+
+**Signature:**
+
+```go
+func (b *BTree) hashKey(key string) string
+```
+
+## Cache Example
+
+Here’s a simple example of using the cache system to store and retrieve nodes:
+
+```go
+// Initialize the cache
+cache := kayveedb.NewCache(100, func(offset int64, node *kayveedb.Node) error {
+    // Simulate flushing a node to disk
+    fmt.Printf("Flushing node at offset %d\n", offset)
+    return nil
+})
+
+// Create a sample node
+node := &kayveedb.Node{
+    keys: []*kayveedb.KeyValue{{Key: "samplekey", Value: []byte("samplevalue")}},
+}
+
+// Add the node to the cache
+cache.Put(1, node, true)
+
+// Retrieve the node from the cache
+cachedNode, ok := cache.Get(1)
+if ok {
+    fmt.Println("Node found in cache:", cachedNode)
+}
+```
 
 ## License
 
