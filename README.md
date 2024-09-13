@@ -1,7 +1,7 @@
 
 # kayveedb Go Package Documentation
 
-## Current version: **v1.0.7**
+## Current version: **v1.0.8**
 
 ## Overview
 

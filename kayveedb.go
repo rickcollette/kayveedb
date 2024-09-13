@@ -1,4 +1,4 @@
-package kayveedb
+package kayveedbmm
 
 import (
 	"container/list"
@@ -16,7 +16,7 @@ import (
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
-const Version string = "v1.0.7"
+const Version string = "v1.0.8"
 
 func ShowVersion() string {
 	return Version
@@ -476,7 +476,8 @@ func (b *BTree) Shutdown() error {
     return b.Close()
 }
 
-// logOperation logs each operation for persistence.
+// logOperation logs an operation (CREATE/UPDATE/DELETE) to the log file.
+// If skipLog is true, the operation will not be logged, typically used during log replay.
 func (b *BTree) logOperation(op, key string, value []byte, skipLog bool) error {
 	if skipLog {
 		return nil // Skip logging if we're replaying logs
@@ -494,7 +495,8 @@ func (b *BTree) logOperation(op, key string, value []byte, skipLog bool) error {
 }
 
 
-// Encryption and decryption functions using XChaCha20.
+// encrypt encrypts the provided data using XChaCha20 and returns the encrypted result.
+// It uses the encryptionKey and nonce to perform the encryption.
 func (b *BTree) encrypt(data, encryptionKey, nonce []byte) ([]byte, error) {
 	aead, err := chacha20poly1305.NewX(encryptionKey)
 	if err != nil {
@@ -516,6 +518,8 @@ func (b *BTree) writeRoot() error {
 	return encoder.Encode(offset)
 }
 
+// decrypt decrypts the provided encrypted data using XChaCha20.
+// It uses the encryptionKey and nonce to perform the decryption and returns the decrypted result.
 func (b *BTree) decrypt(data, encryptionKey, nonce []byte) ([]byte, error) {
 	aead, err := chacha20poly1305.NewX(encryptionKey)
 	if err != nil {
@@ -524,7 +528,8 @@ func (b *BTree) decrypt(data, encryptionKey, nonce []byte) ([]byte, error) {
 	return aead.Open(nil, nonce, data, nil)
 }
 
-// hashKey hashes a key using HMAC with AES-256.
+// hashKey hashes the provided key using HMAC with SHA-256.
+// It returns the hashed key as a hexadecimal string
 func (b *BTree) hashKey(key string) string {
 	mac := hmac.New(func() hash.Hash { return sha256.New() }, b.hmacKey)
 	mac.Write([]byte(key))
