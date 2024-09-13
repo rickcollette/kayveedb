@@ -1,4 +1,4 @@
-package kayveedbmm
+package kayveedb
 
 import (
 	"container/list"
