@@ -1,6 +1,8 @@
 # Changelog: kayveedb 
 ## Current Version: v1.0.3
 
+### NOTE: Please open a github issue if you run into problems. Also - I am happy to review/accept merge requests.
+
 ### Overview:
 
 These changes improve the overall performance, especially in environments where frequent reads and writes to the B-tree are required, and offer better customization and flexibility in resource management.
