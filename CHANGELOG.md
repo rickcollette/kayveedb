@@ -1,9 +1,9 @@
 # Changelog: kayveedb 
-## Current Version: v1.0.5
+## Current Version: v1.0.6
 
 ### NOTE: Please open a github issue if you run into problems. Also - I am happy to review/accept merge requests.
 
-## Changelog v1.0.5 13/09/2024
+## Changelog v1.0.6 13/09/2024
 
 ### Overview:
 This release introduces significant improvements to path management, data persistence, and shutdown processes. These updates enhance the user experience in managing database paths and filenames, streamline file access, and ensure that application state is safely preserved during shutdown. Additionally, the performance of logging during replay operations has been optimized by skipping redundant logs.
