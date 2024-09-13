@@ -1,6 +1,8 @@
 
 # kayveedb Documentation
 
+## NOTE: Please open a github issue if you run into problems.  Also - I am happy to review/accept merge requests.
+
 ## Overview
 
 `kayveedb` is a Go package that provides a B-tree-based key-value database with XChaCha20 encryption for both in-memory and at-rest data, as well as AES-256 for secure key hashing. It implements log-based persistence, where only changes are logged and applied later for efficiency.
