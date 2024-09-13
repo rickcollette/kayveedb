@@ -2,7 +2,7 @@
 
 ## Vars
 VERSION_FILE="VERSION"
-
+COMMENT=$(cat COMMENT.txt)
 # Get the current version from the VERSION file
 function GetVersion() {
     # Check if the VERSION file exists
@@ -27,7 +27,7 @@ function GetVersion() {
 function GitFunctions() {
     # Stage your changes, commit with the version, tag, and push
     git add .
-    git commit -m "Preparing for ${AppVersion} release"
+    git commit -m "${AppVersion} ${COMMENT}"
     
     # Create a tag for the version
     git tag ${AppVersion}
