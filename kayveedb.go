@@ -23,6 +23,11 @@ import (
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
+// ShowVersion prints the current version of the kayveedb package.
+func ShowVersion() string {
+	return Version
+}
+
 // LogEntry represents an operation log entry (CREATE/DELETE) for log-based persistence.
 type LogEntry struct {
 	Operation string // Operation performed (CREATE/DELETE)

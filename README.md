@@ -24,6 +24,14 @@ import "github.com/rickcollette/kayveedb"
 
 ## Usage
 
+### Showing the current version
+
+To show the version of kayveedb:
+
+```go
+fmt.Println("Version: ", kayveedb.ShowVersion())
+```
+
 ### Initialization
 
 To create a new B-tree:
