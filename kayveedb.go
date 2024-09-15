@@ -974,3 +974,42 @@ func (b *BTree) writeNode(node *Node) (int64, error) {
 
     return offset, nil
 }
+
+// ListKeys traverses the B-tree and returns a slice of all keys in the tree.
+func (b *BTree) ListKeys() ([]string, error) {
+    b.mu.RLock()
+    defer b.mu.RUnlock()
+
+    var keys []string
+    if b.root == nil {
+        return keys, nil
+    }
+
+    err := b.traverse(b.root, &keys)
+    if err != nil {
+        return nil, err
+    }
+    return keys, nil
+}
+
+// traverse is a helper function to recursively traverse the B-tree and collect keys.
+func (b *BTree) traverse(node *Node, keys *[]string) error {
+    // Iterate over keys in the current node
+    for i := 0; i < node.numKeys; i++ {
+        *keys = append(*keys, node.keys[i].Key)
+    }
+
+    // Recurse into child nodes if the node is not a leaf
+    if !node.isLeaf {
+        for i := 0; i <= node.numKeys; i++ {
+            child, err := b.readNode(node.children[i])
+            if err != nil {
+                return fmt.Errorf("failed to read child node at index %d: %w", i, err)
+            }
+            if err := b.traverse(child, keys); err != nil {
+                return err
+            }
+        }
+    }
+    return nil
+}

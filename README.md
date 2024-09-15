@@ -325,6 +325,114 @@ if ok {
 }
 ```
 
+### Function Definition
+
+```go
+func (b *BTree) ListKeys() ([]string, error)
+```
+
+### Description
+
+The `ListKeys` function traverses the B-tree and returns a slice of all keys stored in the tree.
+
+- **Return Type**: `([]string, error)`
+  - A slice of strings containing all the keys in the B-tree.
+  - An error if the operation fails during the traversal.
+
+### Traversal Method
+
+This method uses a helper function `traverse` that recursively walks through each node in the B-tree, collecting keys from each node and appending them to the final result.
+
+#### Helper Function
+
+```go
+func (b *BTree) traverse(node *Node, keys *[]string) error
+```
+
+The `traverse` function is responsible for visiting each node, retrieving the keys, and recursively exploring child nodes (if applicable).
+
+## Usage Example
+
+Here’s how to use the `ListKeys` function:
+
+### Example 1: Listing Keys in the BTree
+
+```go
+package main
+
+import (
+    "fmt"
+    "log"
+    "kayveedb" // Assuming your package is called kayveedb
+)
+
+func main() {
+    // Initialize your B-tree with a minimum degree
+    bt, err := kayveedb.NewBTree(3, "./", "testdb", "testlog", nil, nil, nil, 100)
+    if err != nil {
+        log.Fatalf("Failed to initialize B-tree: %v", err)
+    }
+
+    // Insert some keys into the BTree
+    bt.Insert("key1", []byte("value1"), nil, nil)
+    bt.Insert("key2", []byte("value2"), nil, nil)
+    bt.Insert("key3", []byte("value3"), nil, nil)
+
+    // List all keys in the BTree
+    keys, err := bt.ListKeys()
+    if err != nil {
+        log.Fatalf("Failed to list keys: %v", err)
+    }
+
+    // Print the keys
+    fmt.Println("Keys in the B-tree:", keys)
+}
+```
+
+### Example 2: Handling Empty Trees
+
+If the B-tree is empty, the function will return an empty slice:
+
+```go
+package main
+
+import (
+    "fmt"
+    "log"
+    "kayveedb"
+)
+
+func main() {
+    // Initialize an empty B-tree
+    bt, err := kayveedb.NewBTree(3, "./", "testdb", "testlog", nil, nil, nil, 100)
+    if err != nil {
+        log.Fatalf("Failed to initialize B-tree: %v", err)
+    }
+
+    // List keys in the empty B-tree
+    keys, err := bt.ListKeys()
+    if err != nil {
+        log.Fatalf("Failed to list keys: %v", err)
+    }
+
+    // Expecting an empty list
+    fmt.Println("Keys in the empty B-tree:", keys)
+}
+```
+
+## Error Handling
+
+The `ListKeys` function will return an error in case of any failure while traversing the B-tree or reading a node from the disk. Always check the error and handle it appropriately in your code.
+
+### Example Error Handling
+
+```go
+keys, err := bt.ListKeys()
+if err != nil {
+    log.Fatalf("Error while listing keys: %v", err)
+}
+```
+
 ## License
 
 This package is licensed under the MIT License.
