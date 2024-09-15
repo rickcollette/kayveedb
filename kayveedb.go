@@ -235,11 +235,11 @@ func NewBTree(t int, dbPath, dbName, logName string, hmacKey, encryptionKey, non
 		return nil, err
 	}
 
-	if err := b.loaddbName(); err != nil {
+	if err := b.LoadDB(); err != nil {
 		return nil, err
 	}
 
-	if err := b.loadLog(encryptionKey, nonce); err != nil {
+	if err := b.LoadLog(encryptionKey, nonce); err != nil {
 		return nil, err
 	}
 
@@ -366,7 +366,7 @@ func (b *BTree) Close() error {
 }
 
 // resetLog resets the operation log after a dbName.
-func (b *BTree) resetLog() error {
+func (b *BTree) ResetLog() error {
 	if err := b.logFile.Close(); err != nil {
 		return err
 	}
@@ -378,26 +378,31 @@ func (b *BTree) resetLog() error {
 	return nil
 }
 
-// loaddbName loads the B-tree from the dbName file.
-func (b *BTree) loaddbName() error {
-	file, err := os.Open(b.dbName)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-	defer file.Close()
+func (b *BTree) LoadDB() error {
+    file, err := os.Open(b.dbName)
+    if err != nil {
+        if os.IsNotExist(err) {
+            return nil
+        }
+        return err
+    }
+    defer file.Close()
 
-	decoder := gob.NewDecoder(file)
-	if err := decoder.Decode(&b.root); err != nil {
-		return err
-	}
-	return nil
+    // Only load the root node's metadata, and defer loading other nodes on access.
+    decoder := gob.NewDecoder(file)
+    if err := decoder.Decode(&b.root); err != nil {
+        return err
+    }
+
+    // You might also initialize an empty root if it's a new database
+    if b.root == nil {
+        b.root = &Node{isLeaf: true}
+    }
+    return nil
 }
 
 // loadLog replays the operation log to restore the latest state.
-func (b *BTree) loadLog(encryptionKey, nonce []byte) error {
+func (b *BTree) LoadLog(encryptionKey, nonce []byte) error {
 	file, err := os.Open(b.logName)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -464,7 +469,7 @@ func (b *BTree) saveToDB() error {
         return err
     }
 
-    return b.resetLog()
+    return b.ResetLog()
 }
 
 func (b *BTree) Shutdown() error {
@@ -540,10 +545,12 @@ func (b *BTree) hashKey(key string) string {
 // The node and its children are written back to disk after the split.
 func (b *BTree) splitChild(parent *Node, i int, fullChild *Node) error {
 	t := b.t
+
+	// Create a new node that will be the sibling of the full child
 	newChild := &Node{
 		isLeaf:   fullChild.isLeaf,
-		keys:     append([]*KeyValue{}, fullChild.keys[t:]...),
-		children: append([]int64{}, fullChild.children[t:]...),
+		keys:     append([]*KeyValue{}, fullChild.keys[t:]...), // Copy the second half of the keys
+		children: append([]int64{}, fullChild.children[t:]...),  // Copy the second half of the children
 		numKeys:  t - 1,
 	}
 
@@ -563,7 +570,7 @@ func (b *BTree) splitChild(parent *Node, i int, fullChild *Node) error {
 		return err
 	}
 
-	// Update the parent
+	// Update the parent node with the new child
 	parent.children = append(parent.children[:i+1], append([]int64{newChildOffset}, parent.children[i+1:]...)...)
 	parent.keys = append(parent.keys[:i], append([]*KeyValue{fullChild.keys[t-1]}, parent.keys[i:]...)...)
 	parent.numKeys++
@@ -583,6 +590,7 @@ func (b *BTree) insertNonFull(node *Node, kv *KeyValue) {
 	i := node.numKeys - 1
 
 	if node.isLeaf {
+		// Insert directly into the leaf node
 		node.keys = append(node.keys, nil)
 		for i >= 0 && kv.Key < node.keys[i].Key {
 			node.keys[i+1] = node.keys[i]
@@ -590,29 +598,38 @@ func (b *BTree) insertNonFull(node *Node, kv *KeyValue) {
 		}
 		node.keys[i+1] = kv
 		node.numKeys++
+
+		// Write the updated node back to disk
 		b.writeNode(node)
 	} else {
+		// Traverse the tree only when necessary
 		for i >= 0 && kv.Key < node.keys[i].Key {
 			i--
 		}
 		i++
-		child, err := b.readNode(node.children[i]) // Fix: Handle the error return
+
+		// Load the child node only when required
+		child, err := b.readNode(node.children[i])
 		if err != nil {
-			fmt.Printf("Error reading node: %v\n", err)
+			fmt.Printf("Error reading child node: %v\n", err)
 			return
 		}
 
 		if child.numKeys == 2*b.t-1 {
+			// If the child is full, split it
 			b.splitChild(node, i, child)
 			if kv.Key > node.keys[i].Key {
 				i++
 			}
 		}
-		child, err = b.readNode(node.children[i]) // Fix: Handle the error return
+
+		// Re-read the child node after the split
+		child, err = b.readNode(node.children[i])
 		if err != nil {
-			fmt.Printf("Error reading node: %v\n", err)
+			fmt.Printf("Error re-reading child node: %v\n", err)
 			return
 		}
+
 		b.insertNonFull(child, kv)
 	}
 }
@@ -628,19 +645,25 @@ func (b *BTree) search(node *Node, key string) *KeyValue {
 	for i < node.numKeys && key > node.keys[i].Key {
 		i++
 	}
+
 	if i < node.numKeys && key == node.keys[i].Key {
+		// Key found, return the node
 		return node.keys[i]
-	} else if node.isLeaf {
-		return nil
-	} else {
-		// Load the child from disk and continue searching
-		child, err := b.readNode(node.children[i]) // Fix: Handle the error return
-		if err != nil {
-			fmt.Printf("failed to load child node: %v\n", err)
-			return nil // Returning nil since the function expects *KeyValue
-		}
-		return b.search(child, key)
 	}
+
+	if node.isLeaf {
+		// If node is a leaf, stop the search
+		return nil
+	}
+
+	// Load the child node lazily from disk only when needed
+	child, err := b.readNode(node.children[i])
+	if err != nil {
+		fmt.Printf("failed to load child node: %v\n", err)
+		return nil // Returning nil since the function expects *KeyValue
+	}
+
+	return b.search(child, key)
 }
 
 // deleteInternalNode handles deletion of a key in an internal node.

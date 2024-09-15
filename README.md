@@ -1,7 +1,7 @@
 
 # kayveedb Go Package Documentation
 
-## Current version: **v1.0.8**
+## Current version: **v1.0.9**
 
 ## Overview
 
@@ -80,9 +80,9 @@ The `BTree` struct implements a B-Tree with caching. It uses the cache for effic
 
 - `root *Node`: The root node of the B-Tree.
 - `t int`: The minimum degree of the B-Tree.
-- `snapshot string`: Path to the snapshot file.
-- `opLog string`: Path to the operation log file.
-- `snapshotFile *os.File`: Snapshot file handle.
+- `dbPath string`: Path to the database file.
+- `logName string`: Path to the operation log file.
+- `dbFile *os.File`: Database file handle.
 - `logFile *os.File`: Operation log file handle.
 - `hmacKey []byte`: Key for HMAC hashing.
 - `mu sync.RWMutex`: Read-write mutex for safe concurrent access.
@@ -224,25 +224,6 @@ if err != nil {
     log.Fatal(err)
 }
 fmt.Println("Value:", string(value))
-```
-
-#### `Snapshot`
-
-Writes the B-Tree to disk and resets the operation log.
-
-**Signature:**
-
-```go
-func (b *BTree) Snapshot() error
-```
-
-**Example:**
-
-```go
-err := tree.Snapshot()
-if err != nil {
-    log.Fatal(err)
-}
 ```
 
 #### `Close`
