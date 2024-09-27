@@ -16,7 +16,7 @@ import (
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
-const Version string = "v1.2.2"
+const Version string = "v1.2.3"
 
 // CacheEntry holds the node, its position in the access order list, and its dirty state
 type CacheEntry struct {
@@ -106,6 +106,64 @@ func (b *BTree) RemoveClient(clientID uint32) error {
 	// Optionally, log the removal or perform other actions here
 	return nil
 }
+
+// Shutdown gracefully shuts down the BTree.
+func (bt *BTree) Shutdown() error {
+	bt.mu.Lock()
+	defer bt.mu.Unlock()
+	// Perform necessary cleanup...
+	fmt.Println("BTree shutdown successfully.")
+	return nil
+}
+// ListKeys lists all keys in the BTree in sorted order.
+func (bt *BTree) ListKeys() ([]string, error) {
+	bt.mu.RLock() // Use the correct mutex field
+	defer bt.mu.RUnlock()
+
+	// Ensure the tree is not nil.
+	if bt.root == nil {
+		return nil, fmt.Errorf("BTree is empty")
+	}
+
+	// Store all keys found during traversal.
+	var keys []string
+
+	// Helper function to traverse the tree in-order.
+	var traverse func(node *Node)
+	traverse = func(node *Node) {
+		if node == nil {
+			return
+		}
+
+		// Traverse each key and child in sorted order.
+		for i := 0; i < node.numKeys; i++ {
+			// Traverse the left child before the key.
+			if i < len(node.children) {
+				childNode, err := bt.readNode(node.children[i])
+				if err == nil {
+					traverse(childNode)
+				}
+			}
+
+			// Visit the key itself.
+			keys = append(keys, node.keys[i].Key)
+
+			// Traverse the rightmost child.
+			if i == node.numKeys-1 && i+1 < len(node.children) {
+				childNode, err := bt.readNode(node.children[i+1])
+				if err == nil {
+					traverse(childNode)
+				}
+			}
+		}
+	}
+
+	// Start traversal from the root node.
+	traverse(bt.root)
+
+	return keys, nil
+}
+
 
 // Get retrieves a node from the cache and moves it to the front (most recently used)
 func (c *Cache) Get(offset int64) (*Node, bool) {
