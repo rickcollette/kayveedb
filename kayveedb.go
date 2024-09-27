@@ -16,7 +16,7 @@ import (
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
-const Version string = "v1.1.0"
+const Version string = "v1.1.1"
 
 func ShowVersion() string {
 	return Version
