@@ -87,6 +87,26 @@ func NewCache(size int, flushFn func(offset int64, node *Node) error) *Cache {
 	}
 }
 
+// AddClient adds a client to the BTree's client list.
+func (b *BTree) AddClient(clientID uint32) error {
+	if b.clients == nil {
+		return fmt.Errorf("ClientManager not initialized")
+	}
+	b.clients.AddClient(clientID)
+	// Optionally, log the addition or perform other actions here
+	return nil
+}
+
+// RemoveClient removes a client from the BTree's client list.
+func (b *BTree) RemoveClient(clientID uint32) error {
+	if b.clients == nil {
+		return fmt.Errorf("ClientManager not initialized")
+	}
+	b.clients.RemoveClient(clientID)
+	// Optionally, log the removal or perform other actions here
+	return nil
+}
+
 // Get retrieves a node from the cache and moves it to the front (most recently used)
 func (c *Cache) Get(offset int64) (*Node, bool) {
 	entry, ok := c.store.Load(offset)

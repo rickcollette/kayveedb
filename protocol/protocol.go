@@ -30,18 +30,27 @@ const (
 	CommandSubscribe   CommandType = 0x0E
 	CommandConnect     CommandType = 0x0F
 	CommandDisconnect  CommandType = 0x10
+	// New Command Types for Advanced Features
+	CommandListPush    CommandType = 0x11
+	CommandListRange   CommandType = 0x12
+	CommandSetAdd      CommandType = 0x13
+	CommandSetMembers  CommandType = 0x14
+	CommandHashSet     CommandType = 0x15
+	CommandHashGet     CommandType = 0x16
+	CommandZSetAdd     CommandType = 0x17
+	CommandZSetRange   CommandType = 0x18
 )
 
 // StatusCode represents the status of the response.
 type StatusCode uint32
 
 const (
-	StatusSuccess     StatusCode = 0x00
-	StatusError       StatusCode = 0x01
-	StatusTxBegin     StatusCode = 0x02
-	StatusTxCommit    StatusCode = 0x03
-	StatusTxRollback  StatusCode = 0x04
-	StatusClientAdded StatusCode = 0x05
+	StatusSuccess       StatusCode = 0x00
+	StatusError         StatusCode = 0x01
+	StatusTxBegin       StatusCode = 0x02
+	StatusTxCommit      StatusCode = 0x03
+	StatusTxRollback    StatusCode = 0x04
+	StatusClientAdded   StatusCode = 0x05
 	StatusClientRemoved StatusCode = 0x06
 )
 
@@ -59,29 +68,39 @@ type Response struct {
 	Data      string
 }
 
-// Global BTree instance (pseudo-code, integrate into your app initialization)
+// Global BTree instance
 var (
-	bTreeInstance *lib.BTree
+	bTreeInstance  *lib.BTree
 	maxPayloadSize uint32 = 10 * 1024 * 1024 // Default 10 MB
-	mu             sync.RWMutex              // Mutex to protect maxPayloadSize
+	mu             sync.RWMutex         // Mutex to protect maxPayloadSize
 )
 
-// Initialize BTree (integrate this into your app initialization as needed)
-func InitBTree(t int, dbPath, dbName, logName string, hmacKey, encryptionKey, nonce []byte, cacheSize int) {
-	bTreeInstance, _ = lib.NewBTree(t, dbPath, dbName, logName, hmacKey, encryptionKey, nonce, cacheSize)
+// Initialize BTree
+func InitBTree(t int, dbPath, dbName, logName string, hmacKey, encryptionKey, nonce []byte, cacheSize int) error {
+	var err error
+	bTreeInstance, err = lib.NewBTree(t, dbPath, dbName, logName, hmacKey, encryptionKey, nonce, cacheSize)
+	if err != nil {
+		return fmt.Errorf("InitBTree failed: %w", err)
+	}
+	return nil
 }
 
-// Handle client connection
-func HandleClientConnect(clientID uint32) {
-	bTreeInstance.AddClient(clientID)
-	fmt.Printf("Client %d connected.\n", clientID)
+// HandleClientConnect adds a client to the BTree's client list.
+func HandleClientConnect(clientID uint32) error {
+	if bTreeInstance == nil {
+		return fmt.Errorf("BTree instance not initialized")
+	}
+	return bTreeInstance.AddClient(clientID)
 }
 
-// Handle client disconnection
-func HandleClientDisconnect(clientID uint32) {
-	bTreeInstance.RemoveClient(clientID)
-	fmt.Printf("Client %d disconnected.\n", clientID)
+// HandleClientDisconnect removes a client from the BTree's client list.
+func HandleClientDisconnect(clientID uint32) error {
+	if bTreeInstance == nil {
+		return fmt.Errorf("BTree instance not initialized")
+	}
+	return bTreeInstance.RemoveClient(clientID)
 }
+
 // SetMaxPayloadSize sets a new maximum payload size.
 func SetMaxPayloadSize(size uint32) {
 	mu.Lock()
@@ -95,6 +114,7 @@ func GetMaxPayloadSize() uint32 {
 	defer mu.RUnlock()
 	return maxPayloadSize
 }
+
 // SerializePacket serializes a Packet into bytes.
 func SerializePacket(p Packet) ([]byte, error) {
 	payloadSize := uint32(len(p.Payload))
@@ -195,6 +215,22 @@ func (c CommandType) String() string {
 		return "Connect"
 	case CommandDisconnect:
 		return "Disconnect"
+	case CommandListPush:
+		return "List Push"
+	case CommandListRange:
+		return "List Range"
+	case CommandSetAdd:
+		return "Set Add"
+	case CommandSetMembers:
+		return "Set Members"
+	case CommandHashSet:
+		return "Hash Set"
+	case CommandHashGet:
+		return "Hash Get"
+	case CommandZSetAdd:
+		return "ZSet Add"
+	case CommandZSetRange:
+		return "ZSet Range"
 	default:
 		return "Unknown"
 	}
