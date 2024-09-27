@@ -16,7 +16,7 @@ import (
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
-const Version string = "v1.2.3"
+const Version string = "v1.2.4"
 
 // CacheEntry holds the node, its position in the access order list, and its dirty state
 type CacheEntry struct {
@@ -537,7 +537,10 @@ func (b *BTree) encrypt(data, encryptionKey, nonce []byte) ([]byte, error) {
 	}
 	return aead.Seal(nil, nonce, data, nil), nil
 }
-
+// GetRoot returns the root node of the BTree.
+func (b *BTree) GetRoot() *Node {
+	return b.root
+}
 // decrypt decrypts the provided encrypted data using XChaCha20.
 // It uses the encryptionKey and nonce to perform the decryption and returns the decrypted result.
 func (b *BTree) decrypt(data, encryptionKey, nonce []byte) ([]byte, error) {
