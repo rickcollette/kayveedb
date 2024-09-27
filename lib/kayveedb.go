@@ -16,7 +16,7 @@ import (
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
-const Version string = "v1.2.1"
+const Version string = "v1.2.2"
 
 // CacheEntry holds the node, its position in the access order list, and its dirty state
 type CacheEntry struct {

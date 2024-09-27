@@ -41,9 +41,13 @@ const (
 	CommandZSetRange   CommandType = 0x18
 )
 
-// StatusCode represents the status of the response.
 type StatusCode uint32
-
+type Subscriber struct {
+	// Define fields for Subscriber
+	ID       string
+	Channel  string
+	Messages chan string
+}
 const (
 	StatusSuccess       StatusCode = 0x00
 	StatusError         StatusCode = 0x01
