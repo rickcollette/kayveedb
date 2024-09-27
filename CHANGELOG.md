@@ -1,7 +1,21 @@
 # Changelog: kayveedb 
-## Current Version: v1.0.6
+## Current Version: v1.1.0
 
 ### NOTE: Please open a github issue if you run into problems. Also - I am happy to review/accept merge requests.
+
+## Changelog v1.1.0 27/09/2024
+
+### Overview:
+This release implements a centralized protocol library to be imported by external applications using kayveedb.
+
+### New Features:
+*  import github.com/appremon/kayveedb/protocol"
+
+### Improvements:
+* Keeping a centralized protocol ensures all client/server/etc applications are using the same protocol and do not need to create or import from somewhere else.
+
+### Fixes:
+* NONE
 
 ## Changelog v1.0.8 13/09/2024
 
