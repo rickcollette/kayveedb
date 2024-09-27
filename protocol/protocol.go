@@ -5,25 +5,44 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"sync"
+
+	"github.com/rickcollette/kayveedb/lib"
 )
 
 // CommandType represents the type of command.
 type CommandType byte
 
 const (
-	CommandAuth   CommandType = 0x01
-	CommandInsert CommandType = 0x02
-	CommandUpdate CommandType = 0x03
-	CommandDelete CommandType = 0x04
-	CommandRead   CommandType = 0x05
+	CommandAuth        CommandType = 0x01
+	CommandInsert      CommandType = 0x02
+	CommandUpdate      CommandType = 0x03
+	CommandDelete      CommandType = 0x04
+	CommandRead        CommandType = 0x05
+	CommandBeginTx     CommandType = 0x06
+	CommandCommitTx    CommandType = 0x07
+	CommandRollbackTx  CommandType = 0x08
+	CommandSetCache    CommandType = 0x09
+	CommandGetCache    CommandType = 0x0A
+	CommandDeleteCache CommandType = 0x0B
+	CommandFlushCache  CommandType = 0x0C
+	CommandPublish     CommandType = 0x0D
+	CommandSubscribe   CommandType = 0x0E
+	CommandConnect     CommandType = 0x0F
+	CommandDisconnect  CommandType = 0x10
 )
 
 // StatusCode represents the status of the response.
 type StatusCode uint32
 
 const (
-	StatusSuccess StatusCode = 0x00
-	StatusError   StatusCode = 0x01
+	StatusSuccess     StatusCode = 0x00
+	StatusError       StatusCode = 0x01
+	StatusTxBegin     StatusCode = 0x02
+	StatusTxCommit    StatusCode = 0x03
+	StatusTxRollback  StatusCode = 0x04
+	StatusClientAdded StatusCode = 0x05
+	StatusClientRemoved StatusCode = 0x06
 )
 
 // Packet represents a protocol packet.
@@ -40,6 +59,42 @@ type Response struct {
 	Data      string
 }
 
+// Global BTree instance (pseudo-code, integrate into your app initialization)
+var (
+	bTreeInstance *lib.BTree
+	maxPayloadSize uint32 = 10 * 1024 * 1024 // Default 10 MB
+	mu             sync.RWMutex              // Mutex to protect maxPayloadSize
+)
+
+// Initialize BTree (integrate this into your app initialization as needed)
+func InitBTree(t int, dbPath, dbName, logName string, hmacKey, encryptionKey, nonce []byte, cacheSize int) {
+	bTreeInstance, _ = lib.NewBTree(t, dbPath, dbName, logName, hmacKey, encryptionKey, nonce, cacheSize)
+}
+
+// Handle client connection
+func HandleClientConnect(clientID uint32) {
+	bTreeInstance.AddClient(clientID)
+	fmt.Printf("Client %d connected.\n", clientID)
+}
+
+// Handle client disconnection
+func HandleClientDisconnect(clientID uint32) {
+	bTreeInstance.RemoveClient(clientID)
+	fmt.Printf("Client %d disconnected.\n", clientID)
+}
+// SetMaxPayloadSize sets a new maximum payload size.
+func SetMaxPayloadSize(size uint32) {
+	mu.Lock()
+	defer mu.Unlock()
+	maxPayloadSize = size
+}
+
+// GetMaxPayloadSize retrieves the current maximum payload size.
+func GetMaxPayloadSize() uint32 {
+	mu.RLock()
+	defer mu.RUnlock()
+	return maxPayloadSize
+}
 // SerializePacket serializes a Packet into bytes.
 func SerializePacket(p Packet) ([]byte, error) {
 	payloadSize := uint32(len(p.Payload))
@@ -91,9 +146,8 @@ func DeserializeResponse(reader io.Reader) (Response, error) {
 	}
 
 	// Validate data size to prevent potential buffer overflows or DoS attacks
-	const maxPayloadSize = 10 * 1024 * 1024 // 10 MB
-	if dataSize > maxPayloadSize {
-		return r, fmt.Errorf("DeserializeResponse: data size %d exceeds maximum allowed %d", dataSize, maxPayloadSize)
+	if dataSize > GetMaxPayloadSize() {
+		return r, fmt.Errorf("DeserializeResponse: data size %d exceeds maximum allowed %d", dataSize, GetMaxPayloadSize())
 	}
 
 	// Read Data
@@ -104,4 +158,66 @@ func DeserializeResponse(reader io.Reader) (Response, error) {
 	r.Data = string(dataBytes)
 
 	return r, nil
+}
+
+// Command Types Mapping for Debugging/Logging
+func (c CommandType) String() string {
+	switch c {
+	case CommandAuth:
+		return "Auth"
+	case CommandInsert:
+		return "Insert"
+	case CommandUpdate:
+		return "Update"
+	case CommandDelete:
+		return "Delete"
+	case CommandRead:
+		return "Read"
+	case CommandBeginTx:
+		return "Begin Transaction"
+	case CommandCommitTx:
+		return "Commit Transaction"
+	case CommandRollbackTx:
+		return "Rollback Transaction"
+	case CommandSetCache:
+		return "Set Cache"
+	case CommandGetCache:
+		return "Get Cache"
+	case CommandDeleteCache:
+		return "Delete Cache"
+	case CommandFlushCache:
+		return "Flush Cache"
+	case CommandPublish:
+		return "Publish"
+	case CommandSubscribe:
+		return "Subscribe"
+	case CommandConnect:
+		return "Connect"
+	case CommandDisconnect:
+		return "Disconnect"
+	default:
+		return "Unknown"
+	}
+}
+
+// StatusCode Mapping for Debugging/Logging
+func (s StatusCode) String() string {
+	switch s {
+	case StatusSuccess:
+		return "Success"
+	case StatusError:
+		return "Error"
+	case StatusTxBegin:
+		return "Transaction Begin"
+	case StatusTxCommit:
+		return "Transaction Commit"
+	case StatusTxRollback:
+		return "Transaction Rollback"
+	case StatusClientAdded:
+		return "Client Added"
+	case StatusClientRemoved:
+		return "Client Removed"
+	default:
+		return "Unknown"
+	}
 }

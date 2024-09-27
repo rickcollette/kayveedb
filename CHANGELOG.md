@@ -1,7 +1,74 @@
 # Changelog: kayveedb 
-## Current Version: v1.1.1
+## Current Version: v1.2.0
 
 ### NOTE: Please open a github issue if you run into problems. Also - I am happy to review/accept merge requests.
+
+## Changelog v1.2.0 27/09/2024
+
+### Overview:
+This release includes various enhancements to database management, caching, authentication, data structures, transactions, pub/sub functionality, and server management to expand the functionality of `kayveedb`.
+
+### New Features:
+- **Database Structure and Management**:
+  * Added support for `CREATE DATABASE`, `DROP DATABASE`, `USE DATABASE`, and `SHOW DATABASES` commands to manage multiple databases.
+  * Implemented `SELECT CURRENT_DATABASE()` and `SELECT DATABASE_PATH()` to track and return the current database context and path.
+  
+- **Caching Operations**:
+  * Added SQL-like cache commands: `SET CACHE`, `GET CACHE`, `DELETE CACHE`, and `FLUSH CACHE` to directly interact with the cache.
+  * Introduced dynamic cache configuration via `SET CACHE_SIZE` and `SET CACHE_POLICY`.
+
+- **Authentication and Security**:
+  * Introduced a user management system for `CREATE USER`, `ALTER USER`, and `DROP USER`.
+  * Implemented privilege management via `GRANT` and `REVOKE` commands for database/keyspace permissions.
+  * Added `CONNECT` and `DISCONNECT` commands for session management.
+
+- **Data Structure Operations**:
+  * Implemented support for list operations: `LPUSH`, `RPUSH`, `LRANGE`.
+  * Added set operations: `SADD`, `SMEMBERS`.
+  * Introduced hash operations: `HSET`, `HGET`.
+  * Added sorted set operations: `ZADD`, `ZRANGE`.
+
+- **Transactions**:
+  * Integrated `BEGIN`, `COMMIT`, and `ROLLBACK` commands for transaction handling in `kayveedb`.
+
+- **Pub/Sub Functionality**:
+  * Implemented pub/sub mechanism with `PUBLISH` and `SUBSCRIBE` commands to handle message publishing and subscription.
+
+- **Server Management**:
+  * Implemented `SHOW SERVER INFO` to retrieve server information.
+  * Added `SHOW CONFIG` and `SET CONFIG` to view and modify server configurations dynamically.
+
+### Improvements:
+- **Centralized Protocol Library**:
+  * Tuned the protocol library to support new operations, including cache management, database operations, and pub/sub commands.
+  * Added support for dynamically configurable parameters, including `maxPayloadSize` to prevent buffer overflow.
+
+- **Enhanced Cache Handling**:
+  * Improved the cache eviction policy to support LRU and LFU configurations, providing better cache management and performance.
+
+- **Improved BTree Operations**:
+  * Enhanced BTree handling, including node splitting (`splitChild`), non-full insertions (`insertNonFull`), node merging (`merge`), filling nodes (`fill`), borrowing keys from siblings (`borrowFromPrev`, `borrowFromNext`).
+
+- **Documentation**:
+  * README.md has been updated to contain the new features and usage.
+  
+### Fixes:
+- **Concurrency and Locking**:
+  * Addressed race conditions by improving mutex handling across various operations (insertions, updates, deletions).
+
+- **Disk Persistence**:
+  * Fixed potential issues with BTree node reads/writes to ensure consistency between in-memory and on-disk structures.
+
+- **Configurable Payload Size**:
+  * Made `maxPayloadSize` configurable to provide flexibility in message handling, avoiding fixed size limitations.
+
+### Known Issues:
+- **ActiveClients Tracking**:  
+  * Placeholder for tracking active clients is currently in place but not fully implemented.
+
+---
+
+This update significantly extends the functionality and robustness of `kayveedb`, improving core features and introducing new capabilities for managing databases, caches, transactions, and messaging systems.
 
 ## Changelog v1.1.1 27/09/2024
 

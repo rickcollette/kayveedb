@@ -1,7 +1,7 @@
 # Variables
 APP_NAME := kayveedb
 VERSION_FILE := VERSION
-VERSION_GO := kayveedb.go
+VERSION_GO := lib/kayveedb.go
 README_FILE := README.md
 
 # Read the current version from the VERSION file

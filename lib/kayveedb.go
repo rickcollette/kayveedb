@@ -1,4 +1,4 @@
-package kayveedb
+package lib
 
 import (
 	"container/list"
@@ -16,11 +16,7 @@ import (
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
-const Version string = "v1.1.1"
-
-func ShowVersion() string {
-	return Version
-}
+const Version string = "v1.2.0"
 
 // CacheEntry holds the node, its position in the access order list, and its dirty state
 type CacheEntry struct {
@@ -50,7 +46,7 @@ type KeyValue struct {
 	Value []byte
 }
 
-// BTree structure with a node cache
+// BTree structure with a node cache and client manager
 type BTree struct {
 	root    *Node
 	t       int
@@ -62,6 +58,7 @@ type BTree struct {
 	hmacKey []byte
 	mu      sync.RWMutex
 	cache   *Cache // Cache with configurable size
+	clients *ClientManager // ClientManager for tracking active clients
 }
 
 // Add trailing slash to dbPath if not present
@@ -173,7 +170,6 @@ func (c *Cache) evict() {
 }
 
 // NewBTree initializes the B-tree and adds a cache with configurable size
-// Takes dbPath, dbName, logName to construct full file paths
 func NewBTree(t int, dbPath, dbName, logName string, hmacKey, encryptionKey, nonce []byte, cacheSize int) (*BTree, error) {
 	// Ensure the dbPath has a trailing slash
 	dbPath = ensureTrailingSlash(dbPath)
@@ -213,6 +209,9 @@ func NewBTree(t int, dbPath, dbName, logName string, hmacKey, encryptionKey, non
 		return nil
 	}
 
+	// Initialize the client manager
+	clientManager := NewClientManager()
+
 	b := &BTree{
 		t:       t,
 		dbPath:  dbPath,
@@ -220,6 +219,7 @@ func NewBTree(t int, dbPath, dbName, logName string, hmacKey, encryptionKey, non
 		logName: logName,
 		hmacKey: hmacKey,
 		cache:   NewCache(cacheSize, flushFn), // Initialize a cache with configurable size
+		clients: clientManager,                // Initialize ClientManager
 	}
 
 	// Open database file
@@ -280,10 +280,10 @@ func (b *BTree) Insert(key string, value, encryptionKey, nonce []byte) error {
 		}
 	}
 
+	b.insertNonFull(root, kv)
 	b.logOperation("CREATE", key, encValue, false) // Log normally
 	return nil
 }
-
 
 // Update an existing key-value pair and log the operation.
 func (b *BTree) Update(key string, newValue, encryptionKey, nonce []byte) error {
@@ -302,11 +302,11 @@ func (b *BTree) Update(key string, newValue, encryptionKey, nonce []byte) error 
 	}
 
 	node.Value = encValue
-	b.logOperation("CREATE", key, encValue, false)
+	b.logOperation("UPDATE", key, encValue, false)
 	return nil
 }
 
-// delete removes a key from the B-tree, starting from the given node.
+// Delete removes a key from the B-tree, starting from the given node.
 // It ensures that after deletion, nodes have the correct number of keys, merging or borrowing from siblings if necessary.
 // Nodes and their children are written back to disk as necessary.
 func (b *BTree) Delete(node *Node, key string) error {
@@ -352,56 +352,53 @@ func (b *BTree) Delete(node *Node, key string) error {
 		return err
 	}
 
+	b.logOperation("DELETE", key, nil, false)
 	return nil
 }
 
-func (b *BTree) Close() error {
-	if err := b.dbFile.Close(); err != nil {
-		return err
-	}
-	if err := b.logFile.Close(); err != nil {
-		return err
-	}
-	return nil
-}
+// Read retrieves and decrypts a value.
+func (b *BTree) Read(key string, encryptionKey, nonce []byte) ([]byte, error) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
 
-// resetLog resets the operation log after a dbName.
-func (b *BTree) ResetLog() error {
-	if err := b.logFile.Close(); err != nil {
-		return err
+	hKey := b.hashKey(key)
+	item := b.search(b.root, hKey)
+	if item == nil {
+		return nil, errors.New("key not found")
 	}
-	file, err := os.Create(b.logName)
+
+	decValue, err := b.decrypt(item.Value, encryptionKey, nonce)
 	if err != nil {
+		return nil, err
+	}
+	return decValue, nil
+}
+
+// LoadDB loads the B-tree structure from the database file.
+func (b *BTree) LoadDB() error {
+	file, err := os.Open(b.dbName)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
 		return err
 	}
-	b.logFile = file
+	defer file.Close()
+
+	// Only load the root node's metadata, and defer loading other nodes on access.
+	decoder := gob.NewDecoder(file)
+	if err := decoder.Decode(&b.root); err != nil {
+		return err
+	}
+
+	// Initialize an empty root if it's a new database
+	if b.root == nil {
+		b.root = &Node{isLeaf: true}
+	}
 	return nil
 }
 
-func (b *BTree) LoadDB() error {
-    file, err := os.Open(b.dbName)
-    if err != nil {
-        if os.IsNotExist(err) {
-            return nil
-        }
-        return err
-    }
-    defer file.Close()
-
-    // Only load the root node's metadata, and defer loading other nodes on access.
-    decoder := gob.NewDecoder(file)
-    if err := decoder.Decode(&b.root); err != nil {
-        return err
-    }
-
-    // You might also initialize an empty root if it's a new database
-    if b.root == nil {
-        b.root = &Node{isLeaf: true}
-    }
-    return nil
-}
-
-// loadLog replays the operation log to restore the latest state.
+// LoadLog replays the operation log to restore the latest state.
 func (b *BTree) LoadLog(encryptionKey, nonce []byte) error {
 	file, err := os.Open(b.logName)
 	if err != nil {
@@ -435,52 +432,6 @@ func (b *BTree) LoadLog(encryptionKey, nonce []byte) error {
 	return nil
 }
 
-
-// Read retrieves and decrypts a value.
-func (b *BTree) Read(key string, encryptionKey, nonce []byte) ([]byte, error) {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-
-	hKey := b.hashKey(key)
-	item := b.search(b.root, hKey)
-	if item == nil {
-		return nil, errors.New("key not found")
-	}
-
-	decValue, err := b.decrypt(item.Value, encryptionKey, nonce)
-	if err != nil {
-		return nil, err
-	}
-	return decValue, nil
-}
-
-func (b *BTree) saveToDB() error {
-    b.mu.Lock()
-    defer b.mu.Unlock()
-
-    file, err := os.Create(filepath.Join(b.dbPath, b.dbName)) // Correct usage of dbPath and dbName
-    if err != nil {
-        return err
-    }
-    defer file.Close()
-
-    encoder := gob.NewEncoder(file)
-    if err := encoder.Encode(b.root); err != nil {
-        return err
-    }
-
-    return b.ResetLog()
-}
-
-func (b *BTree) Shutdown() error {
-    // Save the current state of the BTree to the database file
-    if err := b.saveToDB(); err != nil {
-        return fmt.Errorf("failed to save B-tree state: %w", err)
-    }
-    // Close open files (dbFile and logFile)
-    return b.Close()
-}
-
 // logOperation logs an operation (CREATE/UPDATE/DELETE) to the log file.
 // If skipLog is true, the operation will not be logged, typically used during log replay.
 func (b *BTree) logOperation(op, key string, value []byte, skipLog bool) error {
@@ -499,7 +450,6 @@ func (b *BTree) logOperation(op, key string, value []byte, skipLog bool) error {
 	return b.logFile.Sync() // Sync the log file to disk after writing
 }
 
-
 // encrypt encrypts the provided data using XChaCha20 and returns the encrypted result.
 // It uses the encryptionKey and nonce to perform the encryption.
 func (b *BTree) encrypt(data, encryptionKey, nonce []byte) ([]byte, error) {
@@ -508,19 +458,6 @@ func (b *BTree) encrypt(data, encryptionKey, nonce []byte) ([]byte, error) {
 		return nil, err
 	}
 	return aead.Seal(nil, nonce, data, nil), nil
-}
-
-func (b *BTree) writeRoot() error {
-	offset, err := b.writeNode(b.root)
-	if err != nil {
-		return err
-	}
-	_, err = b.dbFile.Seek(0, io.SeekStart) // Move to the start of the file
-	if err != nil {
-		return err
-	}
-	encoder := gob.NewEncoder(b.dbFile)
-	return encoder.Encode(offset)
 }
 
 // decrypt decrypts the provided encrypted data using XChaCha20.
@@ -534,13 +471,75 @@ func (b *BTree) decrypt(data, encryptionKey, nonce []byte) ([]byte, error) {
 }
 
 // hashKey hashes the provided key using HMAC with SHA-256.
-// It returns the hashed key as a hexadecimal string
+// It returns the hashed key as a hexadecimal string.
 func (b *BTree) hashKey(key string) string {
 	mac := hmac.New(func() hash.Hash { return sha256.New() }, b.hmacKey)
 	mac.Write([]byte(key))
 	return fmt.Sprintf("%x", mac.Sum(nil))
 }
 
+// writeNode writes the given node to the database file and returns its offset.
+func (b *BTree) writeNode(node *Node) (int64, error) {
+	dbFilePath := filepath.Join(b.dbPath, b.dbName)
+
+	file, err := os.OpenFile(dbFilePath, os.O_RDWR|os.O_CREATE, 0644)
+	if err != nil {
+		return 0, fmt.Errorf("failed to open dbName file: %w", err)
+	}
+	defer file.Close()
+
+	// Move to the end of the file to append the new node
+	offset, err := file.Seek(0, io.SeekEnd)
+	if err != nil {
+		return 0, fmt.Errorf("failed to append new node: %w", err)
+	}
+
+	// Encode and write the node to disk
+	encoder := gob.NewEncoder(file)
+	if err := encoder.Encode(node); err != nil {
+		return 0, fmt.Errorf("failed to encode node: %w", err)
+	}
+
+	// Add the node to the cache and mark it as dirty
+	b.cache.Put(offset, node, true)
+
+	return offset, nil
+}
+
+// readNode reads a node from the database file at the given offset.
+func (b *BTree) readNode(offset int64) (*Node, error) {
+	dbFilePath := filepath.Join(b.dbPath, b.dbName)
+
+	// Check cache first
+	if node, ok := b.cache.Get(offset); ok {
+		return node, nil
+	}
+
+	// If not found in cache, read from disk
+	file, err := os.OpenFile(dbFilePath, os.O_RDONLY, 0644)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open dbName file: %w", err)
+	}
+	defer file.Close()
+
+	// Seek to the node's position in the file
+	_, err = file.Seek(offset, io.SeekStart)
+	if err != nil {
+		return nil, fmt.Errorf("failed seeking node at offset %d: %w", offset, err)
+	}
+
+	// Decode the node from the file
+	var node Node
+	decoder := gob.NewDecoder(file)
+	if err := decoder.Decode(&node); err != nil {
+		return nil, fmt.Errorf("failed to decode node at offset %d: %w", offset, err)
+	}
+
+	// Add the node to the cache as not dirty (it's fresh from disk)
+	b.cache.Put(offset, &node, false)
+
+	return &node, nil
+}
 // splitChild splits a full child node into two and adjusts the parent accordingly.
 // The node and its children are written back to disk after the split.
 func (b *BTree) splitChild(parent *Node, i int, fullChild *Node) error {
@@ -634,38 +633,6 @@ func (b *BTree) insertNonFull(node *Node, kv *KeyValue) {
 	}
 }
 
-// search looks for a key in the B-tree, starting from the given node.
-// It returns the KeyValue pair if found or nil if not found.
-// The node is loaded from disk as necessary.
-func (b *BTree) search(node *Node, key string) *KeyValue {
-	if node == nil {
-		return nil
-	}
-	i := 0
-	for i < node.numKeys && key > node.keys[i].Key {
-		i++
-	}
-
-	if i < node.numKeys && key == node.keys[i].Key {
-		// Key found, return the node
-		return node.keys[i]
-	}
-
-	if node.isLeaf {
-		// If node is a leaf, stop the search
-		return nil
-	}
-
-	// Load the child node lazily from disk only when needed
-	child, err := b.readNode(node.children[i])
-	if err != nil {
-		fmt.Printf("failed to load child node: %v\n", err)
-		return nil // Returning nil since the function expects *KeyValue
-	}
-
-	return b.search(child, key)
-}
-
 // deleteInternalNode handles deletion of a key in an internal node.
 // Depending on the number of keys in the child nodes, it borrows keys or merges nodes.
 func (b *BTree) deleteInternalNode(node *Node, idx int) error {
@@ -673,7 +640,7 @@ func (b *BTree) deleteInternalNode(node *Node, idx int) error {
 	key := node.keys[idx]
 
 	// Case 1: Predecessor child has at least t keys
-	predChild, err := b.readNode(node.children[idx]) // Fix: Handle the error return
+	predChild, err := b.readNode(node.children[idx])
 	if err != nil {
 		return fmt.Errorf("failed to read predecessor child: %w", err)
 	}
@@ -690,7 +657,7 @@ func (b *BTree) deleteInternalNode(node *Node, idx int) error {
 	}
 
 	// Case 2: Successor child has at least t keys
-	succChild, err := b.readNode(node.children[idx+1]) // Fix: Handle the error return
+	succChild, err := b.readNode(node.children[idx+1])
 	if err != nil {
 		return fmt.Errorf("failed to read successor child: %w", err)
 	}
@@ -710,7 +677,7 @@ func (b *BTree) deleteInternalNode(node *Node, idx int) error {
 	if err := b.merge(node, idx); err != nil {
 		return err
 	}
-	child, err := b.readNode(node.children[idx]) // Fix: Handle the error return
+	child, err := b.readNode(node.children[idx])
 	if err != nil {
 		return fmt.Errorf("failed to read child node: %w", err)
 	}
@@ -723,37 +690,6 @@ func (b *BTree) deleteInternalNode(node *Node, idx int) error {
 
 	return nil
 }
-
-// getPredecessor finds the predecessor of a key in the B-tree.
-func (b *BTree) getPredecessor(node *Node, idx int) *KeyValue {
-	current, err := b.readNode(node.children[idx])
-	if err != nil {
-		fmt.Printf("failed to read current node: %v\n", err)
-	}
-	for !current.isLeaf {
-		current, err = b.readNode(current.children[current.numKeys])
-		if err != nil {
-			fmt.Printf("failed to read current leaf: %v\n", err)
-		}
-	}
-	return current.keys[current.numKeys-1]
-}
-
-// getSuccessor finds the successor of a key in the B-tree.
-func (b *BTree) getSuccessor(node *Node, idx int) *KeyValue {
-	current, err := b.readNode(node.children[idx+1])
-	if err != nil {
-		fmt.Printf("failed to get successor node: %s", err)
-	}
-	for !current.isLeaf {
-		current, err = b.readNode(current.children[0])
-		if err != nil {
-			fmt.Printf("failed to get child node: %s", err)
-		}
-	}
-	return current.keys[0]
-}
-
 // merge merges the child at index idx with its sibling.
 func (b *BTree) merge(node *Node, idx int) error {
 	child, err := b.readNode(node.children[idx])
@@ -796,7 +732,7 @@ func (b *BTree) merge(node *Node, idx int) error {
 func (b *BTree) fill(node *Node, idx int) error {
 	// If the previous sibling has more than t-1 keys, borrow from it
 	if idx != 0 {
-		prevSibling, err := b.readNode(node.children[idx-1]) // Fix: Handle the error return
+		prevSibling, err := b.readNode(node.children[idx-1])
 		if err != nil {
 			return fmt.Errorf("failed to read previous sibling: %w", err)
 		}
@@ -808,8 +744,9 @@ func (b *BTree) fill(node *Node, idx int) error {
 		}
 	}
 
+	// If the next sibling has more than t-1 keys, borrow from it
 	if idx != node.numKeys {
-		nextSibling, err := b.readNode(node.children[idx+1]) // Fix: Handle the error return
+		nextSibling, err := b.readNode(node.children[idx+1])
 		if err != nil {
 			return fmt.Errorf("failed to read next sibling: %w", err)
 		}
@@ -909,107 +846,96 @@ func (b *BTree) borrowFromNext(node *Node, idx int) error {
 
 	return nil
 }
+// writeRoot writes the root node of the BTree to disk.
+func (b *BTree) writeRoot() error {
+	// Write the root node and get its offset
+	offset, err := b.writeNode(b.root)
+	if err != nil {
+		return err
+	}
 
-// Correct file opening with dbFilePath in readNode and writeNode
-func (b *BTree) readNode(offset int64) (*Node, error) {
-    // Use dbPath + dbName for constructing the file path
-    dbFilePath := filepath.Join(b.dbPath, b.dbName)
+	// Move to the start of the file to write the root offset
+	_, err = b.dbFile.Seek(0, io.SeekStart)
+	if err != nil {
+		return err
+	}
 
-    // Check cache first
-    if node, ok := b.cache.Get(offset); ok {
-        // Return node from cache
-        return node, nil
-    }
-
-    // If not found in cache, read from disk
-    file, err := os.OpenFile(dbFilePath, os.O_RDONLY, 0644)
-    if err != nil {
-        return nil, fmt.Errorf("failed to open dbName file: %w", err)
-    }
-    defer file.Close()
-
-    // Seek to the node's position in the file
-    _, err = file.Seek(offset, io.SeekStart)
-    if err != nil {
-        return nil, fmt.Errorf("failed seeking node at offset %d: %w", offset, err)
-    }
-
-    // Decode the node from the file
-    var node Node
-    decoder := gob.NewDecoder(file)
-    if err := decoder.Decode(&node); err != nil {
-        return nil, fmt.Errorf("failed to decode node at offset %d: %w", offset, err)
-    }
-
-    // Add the node to the cache as not dirty (it's fresh from disk)
-    b.cache.Put(offset, &node, false)
-
-    return &node, nil
+	// Encode and write the offset
+	encoder := gob.NewEncoder(b.dbFile)
+	return encoder.Encode(offset)
 }
 
-func (b *BTree) writeNode(node *Node) (int64, error) {
-    // Use dbPath + dbName for constructing the file path
-    dbFilePath := filepath.Join(b.dbPath, b.dbName)
+// search looks for a key in the BTree, starting from the given node.
+// It returns the KeyValue pair if found or nil if not found.
+func (b *BTree) search(node *Node, key string) *KeyValue {
+	if node == nil {
+		return nil
+	}
 
-    file, err := os.OpenFile(dbFilePath, os.O_RDWR|os.O_CREATE, 0644)
-    if err != nil {
-        return 0, fmt.Errorf("failed to open dbName file: %w", err)
-    }
-    defer file.Close()
+	// Find the index where the key would be in the current node
+	i := 0
+	for i < node.numKeys && key > node.keys[i].Key {
+		i++
+	}
 
-    // Move to the end of the file to append the new node
-    offset, err := file.Seek(0, io.SeekEnd)
-    if err != nil {
-        return 0, fmt.Errorf("failed to append new node: %w", err)
-    }
+	// If the key is found, return the key-value pair
+	if i < node.numKeys && key == node.keys[i].Key {
+		return node.keys[i]
+	}
 
-    // Encode and write the node to disk
-    encoder := gob.NewEncoder(file)
-    if err := encoder.Encode(node); err != nil {
-        return 0, fmt.Errorf("failed to encode node: %w", err)
-    }
+	// If the node is a leaf, stop the search
+	if node.isLeaf {
+		return nil
+	}
 
-    // Add the node to the cache and mark it as dirty
-    b.cache.Put(offset, node, true)
+	// Recursively search the child node
+	child, err := b.readNode(node.children[i])
+	if err != nil {
+		fmt.Printf("failed to load child node: %v\n", err)
+		return nil
+	}
 
-    return offset, nil
+	return b.search(child, key)
 }
 
-// ListKeys traverses the B-tree and returns a slice of all keys in the tree.
-func (b *BTree) ListKeys() ([]string, error) {
-    b.mu.RLock()
-    defer b.mu.RUnlock()
+// getPredecessor finds the predecessor of a key in the BTree.
+func (b *BTree) getPredecessor(node *Node, idx int) *KeyValue {
+	current, err := b.readNode(node.children[idx])
+	if err != nil {
+		fmt.Printf("failed to read predecessor node: %v\n", err)
+		return nil
+	}
 
-    var keys []string
-    if b.root == nil {
-        return keys, nil
-    }
+	// Traverse to the rightmost leaf
+	for !current.isLeaf {
+		current, err = b.readNode(current.children[current.numKeys])
+		if err != nil {
+			fmt.Printf("failed to read child node: %v\n", err)
+			return nil
+		}
+	}
 
-    err := b.traverse(b.root, &keys)
-    if err != nil {
-        return nil, err
-    }
-    return keys, nil
+	// Return the last key of the rightmost node
+	return current.keys[current.numKeys-1]
 }
 
-// traverse is a helper function to recursively traverse the B-tree and collect keys.
-func (b *BTree) traverse(node *Node, keys *[]string) error {
-    // Iterate over keys in the current node
-    for i := 0; i < node.numKeys; i++ {
-        *keys = append(*keys, node.keys[i].Key)
-    }
+// getSuccessor finds the successor of a key in the BTree.
+func (b *BTree) getSuccessor(node *Node, idx int) *KeyValue {
+	current, err := b.readNode(node.children[idx+1])
+	if err != nil {
+		fmt.Printf("failed to get successor node: %v\n", err)
+		return nil
+	}
 
-    // Recurse into child nodes if the node is not a leaf
-    if !node.isLeaf {
-        for i := 0; i <= node.numKeys; i++ {
-            child, err := b.readNode(node.children[i])
-            if err != nil {
-                return fmt.Errorf("failed to read child node at index %d: %w", i, err)
-            }
-            if err := b.traverse(child, keys); err != nil {
-                return err
-            }
-        }
-    }
-    return nil
+	// Traverse to the leftmost leaf
+	for !current.isLeaf {
+		current, err = b.readNode(current.children[0])
+		if err != nil {
+			fmt.Printf("failed to read child node: %v\n", err)
+			return nil
+		}
+	}
+
+	// Return the first key of the leftmost node
+	return current.keys[0]
 }
